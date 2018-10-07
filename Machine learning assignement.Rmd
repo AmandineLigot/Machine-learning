@@ -1,0 +1,166 @@
+---
+title: "Machine Learning assignement: Qualitative Activity Recognition of Weight Lifting Exercises"
+output: html_document
+---
+
+The aim of this study is to design a model via Machine Mearning that enables us to determine if a lifting exercise was well performed or not. This by using the data from sensors worn by the sportsman on his/her arms, on the gloves, on the belt and on the dumbell. The data are from: http://groupware.les.inf.puc-rio.br/har
+
+Two sets were downloaded:
+
+* the training data, used to build the model and calculate the accuracy of the model: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+* the test data, used for the quizz: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+# Getting the data
+
+The two data sets were downloaded and read by the read.csv function in R. The different packages were also downloaded at the same time.
+The column *classe* was set as a factor to ease the building of the model.
+
+```{r, results='hide', warning=FALSE, message=FALSE, cache=TRUE}
+library(dplyr)
+library(caret)
+library(doParallel)
+
+set.seed(2000)
+
+dftest <- read.csv("pml-testing.csv", stringsAsFactors = FALSE, na.strings = c("#DIV/0!", "NA", ""), sep = ",", dec = ".")
+df <- read.csv("pml-training.csv", stringsAsFactors = FALSE, na.strings = c("#DIV/0!", "NA", ""), sep = ",", dec = ".")
+df$classe <- as.factor(df$classe)
+```
+
+# Cleaning the data
+
+If we take a look at the test data set, we can observe that the columns about average, standard deviation, variance are completely filled with NA's. Thus we cannot use them in the building of the model.
+
+```{r, results='hide', warning=FALSE, message=FALSE, cache=TRUE}
+#keep the one with no NA values in the test set
+co <- names(dftest[,colSums(is.na(dftest)) == 0])
+
+df <- select(df, one_of(c(co, "classe")))
+dftest <- dftest[,co]
+```
+
+Moreover, the first seven columns are either characters, or time serie data. We will not use them. That is why, there are removed from the training and test data sets.
+
+```{r,results='hide', warning=FALSE, message=FALSE, cache=TRUE}
+#remove the first columns
+df <- df[,-(1:7)]
+dftest <- dftest[,-(1:7)]
+```
+
+We can also check that the predictors that we have left have a variance different of 0. But none of the predictors that are left have a null variance.
+
+```{r, cache=TRUE}
+nsv <- nearZeroVar(df, saveMetrics = T)
+which(nsv[,4]== TRUE)
+```
+
+So we have now data sets that have the following dimension:
+```{r, echo=TRUE, cache=TRUE}
+dim(df)
+dim(dftest)
+```
+
+# Partionning the data
+In order to assess the model's accuracy, we need to have a training and a testing test. They are obtained by splitting the training data set.
+
+```{r,results='hide', warning=FALSE, message=FALSE, cache=TRUE}
+split <- createDataPartition( y= df$classe, p = 0.7, list = FALSE)
+training <- df[split,]
+test <- df[-split,]
+```
+
+They have the following dimension:
+
+```{r, echo=TRUE, cache=TRUE}
+dim(training)
+dim(test)
+```
+
+# Building of models
+
+Several models are looked at and accuracy is the mean to determine which one is the best model. The aim is to have an accuracy of at least 0.99 to be able to pass the quizz.
+For all the models (except the first one), parallel processing is used in order to reduce the time of calculation. For these ones a 5-fold cross-validation was chosen.
+
+## Decision Tree
+Because we search to match a model link to cassification, decision tree can be a good model.
+
+```{r, results='hide', warning=FALSE, message=FALSE, cache=TRUE}
+model <- train(classe ~., method = "rpart", data = training)
+prediction <- predict(model, newdata = test)
+acctest <- confusionMatrix(prediction, test$classe)
+```
+
+The accuracy is really low (0.49). That is why, another model will be used.
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+acctest
+```
+
+## Boosting
+
+In that case, boosting with trees will be used, via the method "gbm" in the caret package.
+
+```{r, results='hide', warning=FALSE, message=FALSE, cache=TRUE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+
+model2 <- train(classe ~. , method = "gbm", data = training, verbose = F, trControl = fitControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+prediction2 <- predict(model2, newdata = test)
+acctest2 <- confusionMatrix(prediction2, test$classe)
+```
+
+The accuracy that is obtained is lot higher than with decision tree (0.96). However, it is still not good enough.
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+acctest2
+```
+
+## Random Forest
+
+In order to get a better model, Random Forest alorithm will be used.
+
+```{r,results='hide', warning=FALSE, message=FALSE, cache=TRUE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+
+model3 <- train(classe ~. , method = "rf", data = training, trControl = fitControl, verbose = F)
+
+stopCluster(cluster)
+registerDoSEQ()
+
+prediction3 <- predict(model3, newdata = test)
+acctest3 <- confusionMatrix(prediction3, test$classe)
+```
+
+```{r,warning=FALSE, message=FALSE, cache=TRUE}
+model3
+plot(model3)
+```
+
+The accuracy is very good (0.99). Meaning that we can use this model for further tests.
+
+```{r,echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE}
+acctest3
+```
+
+We can then use this model, to predict the 20 test cases:
+```{r,warning=FALSE, message=FALSE, cache=TRUE}
+predictionfinal <- predict(model3, newdata = dftest)
+predictionfinal
+```
+
+# Conclusion
+
+We were able to obtain an  accuracy of 0.99 by building a model using Random Forests, with a 5-fold cross-validation.
